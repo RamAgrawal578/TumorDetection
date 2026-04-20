@@ -1,45 +1,26 @@
 import os
 import sys
+import io
+import base64
 import logging
+import numpy as np
+from flask import Flask, render_template, request
+from PIL import Image
+from tensorflow import keras
+from werkzeug.utils import secure_filename
 
 logging.basicConfig(stream=sys.stdout, level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
-logger.info("Starting app imports...")
-
-try:
-    import uuid
-    import numpy as np
-    from flask import Flask, render_template, request
-    from PIL import Image
-    from tensorflow import keras
-    from werkzeug.utils import secure_filename
-    logger.info("Core imports OK")
-except Exception as e:
-    logger.error(f"Core import failed: {e}")
-    raise
-
-try:
-    from src.config import IMG_SIZE
-    from src.utils import load_class_names, preprocess_pil_image
-    logger.info(f"src imports OK — IMG_SIZE={IMG_SIZE}")
-except Exception as e:
-    logger.error(f"src import failed: {e}")
-    raise
+from src.config import IMG_SIZE
+from src.utils import load_class_names, preprocess_pil_image
 
 app = Flask(__name__, template_folder="templates", static_folder="static")
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 MODEL_PATH = os.path.join(BASE_DIR, "models", "brain_tumor_classifier.keras")
 CLASS_NAMES_PATH = os.path.join(BASE_DIR, "models", "class_names.json")
-UPLOAD_FOLDER = os.path.join(BASE_DIR, "static", "uploads")
 ALLOWED_EXTENSIONS = {"png", "jpg", "jpeg"}
-
-app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
-os.makedirs(app.config["UPLOAD_FOLDER"], exist_ok=True)
-
-logger.info(f"MODEL_PATH exists: {os.path.exists(MODEL_PATH)}")
-logger.info(f"CLASS_NAMES_PATH exists: {os.path.exists(CLASS_NAMES_PATH)}")
 
 model = None
 class_names = None
@@ -89,19 +70,24 @@ def predict():
             return "No file uploaded", 400
 
         file = request.files["file"]
+
         if file.filename == "":
             return "No file selected", 400
+
         if not allowed_file(file.filename):
             return "Invalid file type", 400
 
         original_name = secure_filename(file.filename)
         ext = original_name.rsplit(".", 1)[1].lower()
-        unique_name = f"{uuid.uuid4().hex}.{ext}"
-        absolute_path = os.path.join(app.config["UPLOAD_FOLDER"], unique_name)
-        file.save(absolute_path)
+        mime = "image/jpeg" if ext in ("jpg", "jpeg") else "image/png"
 
-        relative_path = f"uploads/{unique_name}"
-        image = Image.open(absolute_path).convert("RGB")
+        # Read into memory — no disk writes
+        file_bytes = file.read()
+        image_b64 = base64.b64encode(file_bytes).decode("utf-8")
+        image_data_url = f"data:{mime};base64,{image_b64}"
+
+        # Predict
+        image = Image.open(io.BytesIO(file_bytes)).convert("RGB")
         batch = preprocess_pil_image(image, IMG_SIZE)
 
         preds = model.predict(batch, verbose=0)[0]
@@ -126,7 +112,7 @@ def predict():
             "result.html",
             prediction=prediction,
             confidence=confidence,
-            image_file=relative_path,
+            image_file=image_data_url,
             probabilities=probability_items,
             uploaded_name=original_name,
         )
