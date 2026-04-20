@@ -1,4 +1,3 @@
-
 import os
 import uuid
 import numpy as np
@@ -23,7 +22,6 @@ ALLOWED_EXTENSIONS = {"png", "jpg", "jpeg"}
 app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
 os.makedirs(app.config["UPLOAD_FOLDER"], exist_ok=True)
 
-# 🔥 Lazy loading
 model = None
 class_names = None
 
@@ -48,9 +46,9 @@ def prettify_label(label: str) -> str:
 
 
 def load_assets():
-    model = keras.models.load_model(MODEL_PATH)
-    class_names = load_class_names(CLASS_NAMES_PATH)
-    return model, class_names
+    loaded_model = keras.models.load_model(MODEL_PATH)
+    loaded_class_names = load_class_names(CLASS_NAMES_PATH)
+    return loaded_model, loaded_class_names
 
 
 @app.route("/")
@@ -58,25 +56,29 @@ def home():
     return render_template("index.html")
 
 
+@app.route("/health")
+def health():
+    return "OK", 200
+
+
 @app.route("/predict", methods=["POST"])
 def predict():
     global model, class_names
 
     try:
-        # ✅ Lazy load model
         if model is None or class_names is None:
             model, class_names = load_assets()
 
         if "file" not in request.files:
-            return "No file uploaded"
+            return "No file uploaded", 400
 
         file = request.files["file"]
 
         if file.filename == "":
-            return "No file selected"
+            return "No file selected", 400
 
         if not allowed_file(file.filename):
-            return "Invalid file type"
+            return "Invalid file type", 400
 
         original_name = secure_filename(file.filename)
         ext = original_name.rsplit(".", 1)[1].lower()
@@ -119,12 +121,11 @@ def predict():
         )
 
     except Exception as e:
-        return f"Error: {str(e)}"
+        app.logger.error(f"Prediction error: {str(e)}", exc_info=True)
+        return f"Error: {str(e)}", 500
 
 
-# 🔥 CRITICAL: Required for Render/Gunicorn
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
-
 
